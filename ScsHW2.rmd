@@ -1,0 +1,654 @@
+---
+title: "SCsHW"
+output: html_document
+date: "2026-05-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initialize
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+```
+
+```{r}
+# Load the PBMC dataset
+colon.data <- sm
+# Initialize the Seurat object with the raw (non-normalized data).
+colon <- CreateSeuratObject(counts = colon.data, project = "colon", min.cells = 3, min.features = 200)
+colon1 <- CreateSeuratObject(counts = colon.data, project = "colon", min.cells = 3, min.features = 200)
+
+#notice that the parameters filter out all cells in which there are less than 200 genes expressed (min.features) and genes expressed in less that 3 cells (min.cells). The matrix will contain 13714 genes and 2700 cells. That is, an initial cell/gene removal. The parameters used are here usually not changed.
+colon
+
+
+```
+
+```{r}
+sm@Dimnames[[1]] <- sub("_[^_]*$", "", sm@Dimnames[[1]])
+genenames <- rownames(sm)
+rownames(sm) <- make.names(genenames, unique=TRUE)
+
+colon <- CreateSeuratObject(counts = sm, project = "colon", min.cells = 3, min.features = 200)
+colon1 <- CreateSeuratObject(counts = sm, project = "colon", min.cells = 3, min.features = 200)
+
+
+colon1
+colon
+
+rownames(colon)
+```
+
+## Quality control
+
+```{r}
+head(colnames(colon))
+
+grep("^MT\\.",rownames(colon),value = TRUE)
+
+grep("^MT",rownames(colon),value = TRUE)
+```
+```{r}
+colon[["percent.mt"]] <- PercentageFeatureSet(colon, pattern = "^MT\\.")
+head(colon)
+```
+
+
+```{r}
+grep("^RP[LS]",rownames(colon),value = TRUE)
+```
+
+```{r}
+colon[["percent.rbp"]] <- PercentageFeatureSet(colon, pattern = "^RP[LS]")
+head(colon)
+```
+
+```{r}
+head(colon@meta.data, 5)
+```
+
+```{r}
+VlnPlot(colon, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rbp"), ncol = 4)
+```
+
+```{r}
+VlnPlot(colon, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rbp"), ncol = 4, pt.size=0)
+```
+
+```{r}
+plot1 <- FeatureScatter(colon, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(colon, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+```{r}
+plot3 <- FeatureScatter(colon, feature1 = "nCount_RNA", feature2 = "percent.rbp")
+plot3
+```
+
+## Filtering out bad cells
+QUA HO CAMBIATO TUTTO
+```{r}
+#colon <- subset(colon, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+colon <- subset(colon, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & percent.mt < 20)
+```
+
+
+```{r}
+colon
+```
+
+## Normalizing the data
+```{r}
+colon <- NormalizeData(colon, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+colon@assays$RNA
+```
+
+```{r}
+colon@assays
+```
+
+```{r}
+head(colon[["RNA"]]$counts["IL32",],20)
+```
+
+```{r}
+head(colon[["RNA"]]$data["IL32",],20)
+```
+### Mean expression across cells
+Highest mean expression across our cells
+```{r}
+apply(colon[["RNA"]]$data,1,mean) -> gene.expression
+
+sort(gene.expression, decreasing = TRUE) -> gene.expression
+
+head(gene.expression, n=50)
+```
+
+```{r}
+VlnPlot(colon, features = c("MALAT1","B2M"))
+```
+
+### Cell Cycle genes
+```{r}
+cc.genes.updated.2019
+```
+
+```{r}
+CellCycleScoring(colon, s.features = cc.genes.updated.2019$s.genes, g2m.features = cc.genes.updated.2019$g2m.genes, set.ident = TRUE) -> colon
+
+colon[[]]
+```
+
+```{r}
+#the default method -vst- computes (or better, estimates) the mean-variance relationship of each gene, and chooses the 2000 genes with hte highest variance. 
+colon <- FindVariableFeatures(colon, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(colon), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(colon)
+plot1 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 
+```
+
+```{r}
+all.genes <- rownames(colon)
+colon <- ScaleData(colon, features = all.genes)
+```
+
+```{r}
+colon@assays$RNA
+```
+
+```{r}
+head(colon[["RNA"]]$scale.data["IL32",],20)
+```
+
+## Dimensional reduction
+```{r}
+colon <- RunPCA(colon, features = VariableFeatures(object = colon))
+# Examine and visualize PCA results a few different ways
+print(colon[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+```{r}
+DimPlot(colon, reduction = "pca")
+```
+```{r}
+VizDimLoadings(colon, dims = 1:2, reduction = "pca")
+```
+
+
+```{r}
+ElbowPlot(colon, ndims=300)
+```
+
+```{r}
+pc.touse <- (colon$pca@stdev)^2
+pc.touse <- pc.touse/sum(pc.touse)
+pc.touse <- cumsum(pc.touse)[1:1000]
+pc.touse <- min(which(pc.touse>=0.8))
+
+pc.touse
+```
+
+## clustering
+```{r}
+colon <- FindNeighbors(colon, dims = 1:25)
+
+colon20 <- FindNeighbors(colon, dims = 1:20)
+colon20_0.5 <- FindClusters(colon20, resolution = 0.5)
+```
+I CHANGE RESOLUTION
+```{r}
+colon <- FindClusters(colon, resolution = 1)
+```
+
+```{r}
+head(Idents(colon), 5)
+```
+
+```{r}
+head(colon[[]],5)
+```
+
+```{r}
+DimPlot(colon, reduction = "pca", dims=c(1,25))
+```
+
+### tsne
+```{r}
+colon <- RunTSNE(colon, dims=1:25)
+DimPlot(colon, reduction = "tsne")
+```
+
+```{r}
+colon10_0.5 <- RunTSNE(colon10_0.5, dims=1:10)
+DimPlot(colon10_0.5, reduction = "tsne")
+```
+
+```{r}
+colon20_0.5 <- RunTSNE(colon20_0.5, dims=1:20)
+DimPlot(colon20_0.5, reduction = "tsne")
+```
+
+###Umap
+
+
+```{r}
+colon <- RunUMAP(colon, dims = 1:25)
+#if you cannot install UMAP, t_SNE is anyway ok for your project!
+DimPlot(colon, reduction = "umap")
+DimPlot(colon, reduction = "umap", label=TRUE)
+```
+```{r}
+colon10_0.5 <- RunUMAP(colon10_0.5, dims = 1:10)
+#if you cannot install UMAP, t_SNE is anyway ok for your project!
+DimPlot(colon10_0.5, reduction = "umap")
+```
+
+```{r}
+colon20_0.5 <- RunUMAP(colon20_0.5, dims = 1:20)
+#if you cannot install UMAP, t_SNE is anyway ok for your project!
+DimPlot(colon20_0.5, reduction = "umap")
+```
+
+```{r}
+FeaturePlot(colon, features = c("percent.mt", "nCount_RNA", "nFeature_RNA", "percent.rbp"))
+```
+
+
+```{r}
+VlnPlot(colon,features="nCount_RNA")
+```
+
+```{r}
+VlnPlot(colon,features="nFeature_RNA")
+```
+
+```{r}
+VlnPlot(colon,features="percent.mt")
+```
+
+```{r}
+colon@meta.data %>%
+  group_by(seurat_clusters,Phase) %>%
+  count() %>%
+  group_by(seurat_clusters) %>%
+  mutate(percent=100*n/sum(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x=seurat_clusters,y=percent, fill=Phase)) +
+  geom_col() +
+  ggtitle("Percentage of cell cycle phases per cluster")
+```
+
+
+## Cluster comparisans and DE genes analysis
+```{r}
+cluster0.markers <- FindMarkers(colon, ident.1 = 0, min.pct = 0.25, test.use = "wilcox")
+head(cluster0.markers)
+```
+
+```{r}
+cluster1_12.markers <- FindMarkers(colon, ident.1 = 1, ident.2 = 12, min.pct = 0.25)
+head(cluster1_12.markers, n = 5)
+```
+
+```{r}
+cluster0_2.markers <- FindMarkers(colon, ident.1 = 0, ident.2 = 2, min.pct = 0.25)
+head(cluster1_12.markers, n = 5)
+```
+
+```{r}
+cluster0vs.markers <- FindMarkers(colon, ident.1 = 0, ident.2 = c(16, 13, 19), min.pct = 0.25)
+head(cluster0vs.markers, n = 5)
+```
+
+```{r}
+cluster3.markers <- FindMarkers(colon, ident.1 = 3, min.pct = 0.25, test.use = "wilcox")
+head(cluster3.markers)
+```
+
+```{r}
+cluster2.markers <- FindMarkers(colon, ident.1 = 2, min.pct = 0.25, test.use = "wilcox")
+head(cluster2.markers)
+```
+
+```{r}
+cluster1.markers <- FindMarkers(colon, ident.1 = 1, min.pct = 0.25, test.use = "wilcox")
+head(cluster1.markers)
+```
+
+```{r}
+cluster1vs.markers <- FindMarkers(colon, ident.1 = 1, ident.2 = c(15,11, 8), min.pct = 0.25)
+head(cluster1vs.markers, n = 5)
+```
+
+```{r}
+cluster3.markers <- FindMarkers(colon, ident.1 = 3, min.pct = 0.25, test.use = "wilcox")
+head(cluster3.markers)
+```
+
+```{r}
+cluster3vs.markers <- FindMarkers(colon, ident.1 = 3, ident.2=c(9, 16, 10, 6, 18), min.pct = 0.25, test.use = "wilcox")
+head(cluster3vs.markers)
+```
+
+```{r}
+cluster5.markers <- FindMarkers(colon, ident.1 = 5, min.pct = 0.25, test.use = "wilcox")
+head(cluster5.markers)
+```
+
+```{r}
+cluster5_11.markers <- FindMarkers(colon, ident.1 = 5, ident.2 = 11, min.pct = 0.25)
+head(cluster5_11.markers, n = 5)
+```
+
+```{r}
+cluster5_7.markers <- FindMarkers(colon, ident.1 = 5, ident.2 = 7, min.pct = 0.25)
+head(cluster5_7.markers, n = 5)
+```
+
+```{r}
+cluster8.markers <- FindMarkers(colon, ident.1 = 8, min.pct = 0.25, test.use = "wilcox")
+head(cluster8.markers)
+```
+
+```{r}
+cluster6_9.markers <- FindMarkers(colon, ident.1 = 6, ident.2 = c(9,10), min.pct = 0.25)
+head(cluster6_8.markers, n = 5)
+```
+
+```{r}
+cluster7.markers <- FindMarkers(colon, ident.1 = 7, min.pct = 0.25, test.use = "wilcox")
+head(cluster7.markers)
+```
+
+```{r}
+cluster8_7.markers <- FindMarkers(colon, ident.1 = 8, ident.2 = c(7,3,6), min.pct = 0.25)
+head(cluster8_7.markers, n = 5)
+```
+
+```{r}
+cluster9.markers <- FindMarkers(colon, ident.1 = 9, min.pct = 0.25, test.use = "wilcox")
+head(cluster9.markers)
+```
+
+```{r}
+cluster9_6.markers <- FindMarkers(colon, ident.1 = 9, ident.2 =  6, min.pct = 0.25)
+head(cluster9_6.markers, n = 5)
+```
+
+```{r}
+cluster9vs.markers <- FindMarkers(colon, ident.1 = 9, ident.2 = c(3, 6, 10), min.pct = 0.25)
+head(cluster9vs.markers, n = 10)
+```
+
+```{r}
+cluster10_6.markers <- FindMarkers(colon, ident.1 = 10, ident.2 = 6, min.pct = 0.25)
+head(cluster10_6.markers, n = 5)
+```
+
+```{r}
+cluster13_14.markers <- FindMarkers(colon, ident.1 = 13, ident.2 = 14, min.pct = 0.25)
+head(cluster13_14.markers, n = 5)
+```
+
+```{r}
+cluster13.markers <- FindMarkers(colon, ident.1 = 13, min.pct = 0.25, test.use = "wilcox")
+head(cluster13.markers)
+```
+
+```{r}
+cluster16.markers <- FindMarkers(colon, ident.1 = 16, min.pct = 0.25, test.use = "wilcox")
+head(cluster16.markers)
+```
+
+--------------------------------------------------------------
+```{r}
+colon.markers <- FindAllMarkers(colon, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+colon.markers
+```
+
+```{r}
+colon.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+```
+CLUSTER 0 -------------------- fibroblasts but inflammated
+HAPLN1 globlet cells
+CCL8 cellule T
+FDCSP 
+APOE espresso da mast cells
+MMP23B cellule NK
+
+CXCL14
+F3
+EIF5A
+
+CLUSTER 1 --------------------- Mesenchymal cells
+PTGIS t cells or colonociti
+VSTM2A
+FGF9 epitelial
+ALKAL2
+ENHO epitelial cells of colon
+PDGFD
+
+CLUSTER 2 --------------------- Lamina Propria fibrobalsts
+APOE
+SCT 
+CCL
+
+APOE
+ADAM28
+HAPLN1
+CCL8
+ADAMDEC1
+STMN2
+
+<!-- kinda problematic and actually does not express normal DNA RNA binding proteins -->
+<!-- EIF5A -->
+<!-- F3 -->
+<!-- PER2 -->
+<!-- BICC1 -->
+<!-- CTNNB1 probably enteric stem cells -->
+
+CLUSTER 3 --------------------- (venous) ENDOTELIAL CELLS CLDN5 and ACKR1
+TSPAN7 prob colonociti
+ACKR1 should be endotelial but does not exist in colon
+MADCAM1 probably t cell or mast cell 
+CLDN5 endotelial cell
+RNF122 neutrophili
+
+CLUSTER 4 --------------------- ENTERIC GLIA CELLS
+S100B
+HLA-DRB01 mhc class ii
+
+CLUSTER 5 --------------------- Submucosa-Associated Fibroblasts (SAFs)
+mast cells
+Mast cells c-22
+MFAP5
+HHIP
+
+CLUSTER 6 --------------------- VASCULAR endothelial cells
+INHBB
+EXOC3L2
+SEMA3G
+vascular endothelial cells
+
+
+<!-- not really sure, just know disease type stuff, like cancer -->
+<!-- GSN	 -->
+<!-- PODXL	 -->
+<!-- EFNB2 cancer -->
+<!-- HEY1	 -->
+<!-- FLT1	 -->
+
+CLUSTER 7 --------------------- Stem Cell Niche (SCN) Fibroblasts / tropocyte
+GREM1
+C7
+SFRP2 enteric transient amplifying cells
+
+CLUSTER 8 --------------------- very sus cells, probably cancerous cells too
+AC022217.2
+Z93241.1
+AP000769.1
+AC091271.1
+SNHG12
+
+NEAT1
+MT.CO3
+
+CLUSTER 9 --------------------- General/Immature Capillary Endothelial Cells
+PLVAP	
+SRGN	
+IFI27
+TMEM88
+FCN3
+
+
+CLUSTER 10 --------------------- Inflammation-Associated Fibroblast (IAF) 
+C2CD4B
+TLL1
+BCAT1, FAM155A, and CFP
+
+
+CLUSTER 11 --------------------- Cancer-Associated Fibroblast (CAF) 
+nrg1 rigenerazione cellule
+ACP5 macrophage and epithelial tissue
+
+
+CLUSTER 12 --------------------- Smooth muscle
+12 new: smooth muscle / neuroendocrine cells
+NTRK2 and NPY1r
+SLC38A11
+MYH11 HRH2
+ACTA2
+
+RERGL
+CASQ2
+KCNA5
+HRH2
+NPY1R
+
+
+CLUSTER 13 -------------------- 
+TUFT CELLS: guardian chemosensory elements of the digestive tract. 
+RGS5
+NDUFA4L2
+
+CLUSTER 14 -------------------- Vascular smooth muscle cells
+LPL
+KCNJ8
+
+
+15 colonocyte c-10, inflammed Inflammation-Associated Fibroblasts (IAFs)—sometimes annotated as activated myofibroblasts or stromal 2 cells.
+PRSS2 
+BMP3
+
+16  Inflammatory Macrophages / Monocytes (specifically the \(CHI3L1^{+}\) / \(IFI16^{+}\) activated macrophage state)
+EIF5A
+IFI6
+RAB12
+ACKR1	
+HNRNPH1	
+CHI3L1
+
+CLUSTER 17 T cell
+CD2 and PTPRC
+
+CLUSTER 18 -------------------- NK-cells / endothelial
+TBX1
+
+CLUSTER 19 -------------------- goblet cells
+KLK1 
+CLDN3
+
+
+<!-- 6 9 10 cluster possibilmente endoteliali con CDH5, EFNB2 -->
+<!-- EFNB2 arterial -->
+
+<!-- PDPN2 are probably immune (lymphatic endothelial cells) -->
+```{r}
+FeaturePlot(colon, features = c( "HAPLN1", "CCL8", "CXCL14", "F3", "VSTM2A"))
+```
+
+```{r}
+FeaturePlot(colon, features = c( "MADCAM1"))
+```
+
+```{r}
+FeaturePlot(colon, features = c( "S100B", "MADCAM1", "CD2", "PRSS2", "NTRK2", "GREM1", "RAMP3", "APOE", "F3"))
+```
+```{r}
+DimPlot(colon, reduction = "umap")
+```
+
+```{r}
+FeaturePlot(colon, features = c( "NRG1", "IL7R", "ACP5", "LPAR3", "PDGFRA", "IL6", "RAMP3"))
+```
+
+```{r}
+FeaturePlot(colon, features = c( "F3", "GREM1", "LGI4", "HLA.DRB1", "CDH19", "GPM6B"))
+```
+
+
+```{r}
+colon.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 5, wt = avg_log2FC) -> top10
+DoHeatmap(colon, features = top10$gene) + NoLegend()
+```
+
+```{r}
+final.cluster.ids <- c(
+  "0" = "Inflammatory Fibroblasts",
+  "1" = "Mesenchymal Cells",
+  "2" = "Lamina Propria Fibroblasts",
+  "3" = "Venous Endothelial Cells",
+  "4" = "Reactive Enteric Glia",
+  "5" = "Submucosa-Associated Fibroblasts",
+  "6" = "Arterial Endothelial Cells",
+  "7" = "Stem Cell Niche Fibroblasts",
+  "8" = "Transcriptional Stress State",
+  "9" = "Capillary Endothelial Cells",
+  "10" = "Inflammation-Associated Fibroblasts",
+  "11" = "Disease-Associated Fibroblasts",
+  "12" = "Smooth Muscle Cells",
+  "13" = "Pericytes",
+  "14" = "Vascular Smooth Muscle Cells",
+  "15" = "Inflamed Myofibroblasts",
+  "16" = "Inflammatory Macrophages",
+  "17" = "T-Cells",
+  "18" = "NK-Cells",
+  "19" = "Goblet Cells"
+)
+
+names(final.cluster.ids) <- levels(colon)
+colon_named <- RenameIdents(colon, final.cluster.ids)
+DimPlot(colon_named, reduction = "umap", label = TRUE, pt.size = 0.5)
+
+```
+
+
+```{r}
+VlnPlot(colon, features = c("S100B"))
+```
+
+```{r}
+VlnPlot(colon, features = c("NTRK2"))
+```
+
+```{r}
+VlnPlot(colon, features = c("CCL8"))
+```

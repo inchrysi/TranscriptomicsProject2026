@@ -1,0 +1,731 @@
+---
+title: "TranscriptomicsHW"
+output: html_document
+date: "2026-05-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# TranscriptomicsHW: DE analysis
+
+1 and 8 -\> Lung and Blood Vessels
+
+```{r}
+library(recount3)
+library(edgeR)
+library(ggplot2)
+rse_brain <- readRDS("rse_brain.RDS")
+rse_blood <- readRDS("rse_blood.RDS")
+rse_lung <- readRDS("rse_lung.RDS")
+assays(rse_brain)$counts <- transform_counts(rse_brain)
+assays(rse_blood)$counts <- transform_counts(rse_blood)
+assays(rse_lung)$counts <- transform_counts(rse_lung)
+```
+
+## Quality Control
+
+Replicates are 69, 70, 71
+
+```{r}
+rse_brain_selected <- rse_brain[,c(69,70,71)]
+rse_blood_selected <- rse_blood[,c(69,70,71)]
+rse_lung_selected <- rse_lung[,c(69,70,71)]
+counts_brain_selected <- assays(rse_brain_selected)$counts
+counts_blood_selected <- assays(rse_blood_selected)$counts
+counts_lung_selected <- assays(rse_lung_selected)$counts
+
+rse_brain_selected
+```
+
+### RIN score
+must be above ore equal 6
+
+```{r}
+colData(rse_brain)$gtex.smrin[69]
+colData(rse_brain)$gtex.smrin[70] #BAD QUALITY
+colData(rse_brain)$gtex.smrin[71]
+
+colData(rse_blood)$gtex.smrin[69] #BAD QUALITY
+colData(rse_blood)$gtex.smrin[70]
+colData(rse_blood)$gtex.smrin[71]
+
+colData(rse_lung)$gtex.smrin[69]
+colData(rse_lung)$gtex.smrin[70] #BAD QUALITY
+colData(rse_lung)$gtex.smrin[71]
+```
+
+### % Of Mapping
+
+should check these two percentages but I forgor \### % Of rRNA reads
+
+Initial number of reads in each sample
+```{r}
+head(colData(rse_brain)$"recount_qc.star.number_of_input_reads_both")
+```
+
+```{r}
+head(colData(rse_brain)$'recount_qc.star.uniquely_mapped_reads_%_both')
+```
+
+```{r}
+inputreads <- colData(rse_brain)$"recount_qc.star.number_of_input_reads_both"
+boxplot(inputreads)
+```
+
+
+## Retrieving new Replicates
+
+Brain70, Blood69, Lung70 have RIN scores that are \< 6
+
+```{r}
+colData(rse_brain)$gtex.smrin[72] #also bad
+colData(rse_brain)$gtex.smrin[73]
+
+colData(rse_blood)$gtex.smrin[72]
+
+colData(rse_lung)$gtex.smrin[72]
+```
+
+Retrieve new replicates:
+
+```{r}
+rse_brain_selected <- rse_brain[,c(69,71,73)]
+rse_blood_selected <- rse_blood[,c(70,71,72)]
+rse_lung_selected <- rse_lung[,c(69,71,72)]
+counts_brain_selected <- assays(rse_brain_selected)$counts
+counts_blood_selected <- assays(rse_blood_selected)$counts
+counts_lung_selected <- assays(rse_lung_selected)$counts
+```
+
+## Percentage of uniquely mapped reads
+```{r}
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[69]
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[71]
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[73]
+
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[72
+                                                                  ]
+
+
+colData(rse_blood)$"recount_qc.star.uniquely_mapped_reads_%_both"[70]
+colData(rse_blood)$"recount_qc.star.uniquely_mapped_reads_%_both"[71]
+colData(rse_blood)$"recount_qc.star.uniquely_mapped_reads_%_both"[72]
+
+colData(rse_blood)$"recount_qc.star.uniquely_mapped_reads_%_both"[69]
+
+
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[69]
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[71]
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[72]
+
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[70]
+
+```
+
+## % of rRNA reads <0.1
+```{r}
+colData(rse_brain)$gtex.smrrnart[69]
+colData(rse_brain)$gtex.smrrnart[72]
+
+colData(rse_brain)$gtex.smrrnart[71]
+colData(rse_brain)$gtex.smrrnart[73]
+
+colData(rse_blood)$gtex.smrrnart[70]
+colData(rse_blood)$gtex.smrrnart[71]
+colData(rse_blood)$gtex.smrrnart[72]
+
+colData(rse_blood)$gtex.smrrnart[69]
+
+
+colData(rse_lung)$gtex.smrrnart[69]
+colData(rse_lung)$gtex.smrrnart[71]
+colData(rse_lung)$gtex.smrrnart[72] 
+
+colData(rse_lung)$gtex.smrrnart[70]
+
+```
+
+
+## Building the counting table
+
+```{r}
+x <- cbind(counts_brain_selected,counts_blood_selected,counts_lung_selected)
+
+colnames(x) <- c("Brain69", "Brain70","Brain73", "Blood70","Blood71","Blood72","Lung69","Lung71","Lung72")
+
+rownames(x) <- rowData(rse_brain_selected)$gene_name
+
+y <- DGEList(counts=x)
+```
+
+```{r}
+group <- as.factor(c("Brain","Brain","Brain","Blood","Blood","Blood","Lung","Lung","Lung"))
+
+y$samples$group <- group
+
+y
+```
+y and group are important to put up the linear model
+
+```{r}
+y$samples$rin <- as.factor(c(colData(rse_brain_selected)$gtex.smrin,colData(rse_blood_selected)$gtex.smrin,colData(rse_lung_selected)$gtex.smrin))
+ 
+y$samples$slice <- as.factor(c(colData(rse_brain_selected)$gtex.smtsd,colData(rse_blood_selected)$gtex.smtsd,colData(rse_lung_selected)$gtex.smtsd))
+
+y$samples$sex <- as.factor(c(colData(rse_brain_selected)$gtex.sex,colData(rse_blood_selected)$gtex.sex,colData(rse_lung_selected)$gtex.sex))
+
+y$samples$age <- as.factor(c(colData(rse_brain_selected)$gtex.age,colData(rse_blood_selected)$gtex.age,colData(rse_lung_selected)$gtex.age))
+
+y$samples$rRNA <- as.factor(c(colData(rse_brain_selected)$gtex.smrrnart,colData(rse_blood_selected)$gtex.smrrnart,colData(rse_lung_selected)$gtex.smrrnart))
+
+y$samples$mapped <- as.factor(c(colData(rse_brain_selected)$"recount_qc.star.uniquely_mapped_reads_%_both", colData(rse_blood_selected)$"recount_qc.star.uniquely_mapped_reads_%_both",colData(rse_lung_selected)$"recount_qc.star.uniquely_mapped_reads_%_both"))
+
+y$samples$chrm <- as.factor(c(colData(rse_brain_selected)$"recount_qc.aligned_reads%.chrm", colData(rse_blood_selected)$"recount_qc.aligned_reads%.chrm",colData(rse_lung_selected)$"recount_qc.aligned_reads%.chrm"))
+y
+
+```
+pancreas have less mithocondria while heart need a lot of mithocondria
+```{r}
+dim(y)
+```
+
+
+```{r}
+table(rowSums(y$counts==0)==9)
+```
+
+I want to remove the genes that have 0 counts
+
+```{r}
+keep.exprs <- filterByExpr(y, group=group)
+  y <- y[keep.exprs,, keep.lib.sizes=FALSE]
+
+  dim(y)
+```
+
+I want to convert the counts into CPM
+
+```{r}
+logcpm_before <- cpm(y, log=TRUE)
+y <- normLibSizes(y, method = "TMM")
+y
+```
+### boxplot before normalization
+if i don't normalize, the ones with low expression value would be then have a lower expression
+```{r}
+logcpm_after <- cpm(y, log=TRUE)
+boxplot(logcpm_before, notch=T, las=2)
+```
+boxplot after normalization
+```{r}
+boxplot(logcpm_after, notch=T, las=2)
+```
+
+
+```{r}
+
+library(ggplot2)
+library(tidyr)
+library(tibble)
+
+# 1. Convert matrix to a tidy data frame
+# We turn the matrix into a tibble, then pivot it to long format
+df_long <- as.data.frame(logcpm_before) %>%
+  rownames_to_column(var = "gene") %>%
+  pivot_longer(cols = -gene, names_to = "sample", values_to = "expression")
+
+# 2. Add the group information from your 'y' object
+# We map the sample names to their corresponding groups
+df_long$group <- y$samples$group[match(df_long$sample, rownames(y$samples))]
+
+# 3. Define your colors
+my_colors <- c("Brain" = "forestgreen", "Blood" = "darkred", "Lung" = "darkblue")
+
+# 4. Create the beautiful ggplot
+p1<- ggplot(df_long, aes(x = sample, y = expression, fill = group)) +
+  geom_boxplot(notch = TRUE, alpha = 0.8, outlier.size = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Log-CPM Values before normalization",
+       x = "Sample", 
+       y = "Log-CPM") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+# 1. Convert matrix to a tidy data frame
+# We turn the matrix into a tibble, then pivot it to long format
+df_long1 <- as.data.frame(logcpm_after) %>%
+  rownames_to_column(var = "gene") %>%
+  pivot_longer(cols = -gene, names_to = "sample", values_to = "expression")
+
+# 2. Add the group information from your 'y' object
+# We map the sample names to their corresponding groups
+df_long1$group <- y$samples$group[match(df_long$sample, rownames(y$samples))]
+
+# 4. Create the beautiful ggplot
+p2 <- ggplot(df_long1, aes(x = sample, y = expression, fill = group)) +
+  geom_boxplot(notch = TRUE, alpha = 0.8, outlier.size = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Log-CPM Values after normalization",
+       x = "Sample", 
+       y = "Log-CPM") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+p1
+
+p2
+
+```
+
+
+## Design of the linear model
+
+```{r}
+design <- model.matrix(~0+group, data=y$samples)
+colnames(design) <- levels(y$samples$group)
+design
+```
+### I plot my samples in a 2d space
+Observe the Two dimensional Plot! If something is far it may be due to technical, reads, or also biological reasons aka mithocondria stuff
+```{r}
+logcpm <- cpm(y, log=TRUE)
+logcpm
+plotMDS(logcpm, labels=group, col= c("forestgreen", "darkred","darkblue"))
+
+# 1. Create a color vector based on your groups
+# Ensure the order matches the levels of y$samples$group
+group_colors <- c("Blood" = "darkred", "Brain" = "forestgreen", "Lung" = "darkblue")
+sample_colors <- group_colors[y$samples$group]
+
+sample_colors
+
+# 2. Plot using the col argument
+# We set pch = 19 for solid dots, and use labels to keep track of points if needed
+plotMDS(logcpm, col = sample_colors, main="MDS plot of Brain, Blood and Lung Samples (logCPM)") +
+  legend("topleft", 
+       legend = names(group_colors), 
+       col = group_colors, 
+       pch = 19, 
+       bty = "n")
+```
+when a replicate is far form the cluster, after expression profile and normalization:
+WHY? in our case the blood far from the cluster has a higher fraction of mithocondria rna.
+IMO the blood sample is far away for technical reason. 
+
+My replicates are clustered together
+
+### Other info to see more relevant factors!
+
+```{r}
+p1 <- plotMDS(logcpm, labels=y$samples$rRNA, col = sample_colors, main="Fraction of rRNA")+
+  legend("topleft", 
+       legend = names(group_colors), 
+       col = group_colors, 
+       pch = 19, 
+       bty = "n")
+```
+
+```{r}
+p2 <- plotMDS(logcpm, labels=y$samples$chrm, col = sample_colors, main="% of mithocondria reads")+
+  legend("topleft", 
+       legend = names(group_colors), 
+       col = group_colors, 
+       pch = 19, 
+       bty = "n")
+
+unique(y$samples$chrm)
+
+y$samples$chrm
+```
+
+```{r}
+p3<- plotMDS(logcpm, labels=y$samples$age, col = sample_colors, main="Age")+
+  legend("topleft", 
+       legend = names(group_colors), 
+       col = group_colors, 
+       pch = 19, 
+       bty = "n")
+```
+if I find replicates near to another tissue is because maybe biologically they are similar
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(ggforce)
+library(limma)
+
+# 1. Get the MDS coordinates
+mds <- plotMDS(logcpm, plot = FALSE)
+df_mds <- data.frame(
+  Dim1 = mds$x,
+  Dim2 = mds$y,
+  Sample = colnames(logcpm),
+  Group = y$samples$group
+)
+
+# 2. Define your cute color palette
+# Using softer, more aesthetic tones
+cute_colors <- c("Brain" = "#FFA07A", "Blood" = "#8B0000", "Lung" = "#FFB6C1")
+
+# 3. Create the ggplot
+ggplot(df_mds, aes(x = Dim1, y = Dim2, color = Group)) +
+  # Add the points
+  geom_point(size = 4, alpha = 0.8) +
+  # Use ggrepel to label points without overlap
+  geom_text_repel(aes(label = Sample), size = 3, color = "black") +
+  # Use your custom aesthetic colors
+  scale_color_manual(values = cute_colors) +
+  scale_fill_manual(values = cute_colors) +
+  theme_minimal(base_size = 14) +
+  labs(title = "MDS Clustering by Tissue",
+       subtitle = "Visualizing biological similarity",
+       x = paste0("Dimension 1 (", round(mds$var.explained[1]*100), "%)"),
+       y = paste0("Dimension 2 (", round(mds$var.explained[2]*100), "%)")) +
+  theme(legend.position = "bottom",
+        panel.grid.minor = element_blank())
+```
+```{r}
+df_mds_meta <- cbind(df_mds, y$samples)
+
+ggplot(df_mds_meta, aes(x = Dim1, y = Dim2, color = Group)) +
+  # Map age to shape and RIN to size
+  geom_point(aes(shape = age, size = rin), alpha = 0.8) +
+  scale_color_manual(values = cute_colors) +
+  scale_fill_manual(values = cute_colors) +
+  theme_minimal(base_size = 14) +
+  labs(title = "MDS Clustering by Tissue & Metadata",
+       x = "Dim 1", y = "Dim 2")
+```
+
+
+### Estimating the dispersion
+of biological coeff of variation
+```{r}
+y <- estimateDisp(y, design)
+plotBCV(y)
+```
+
+Dispersion is very high. I plot it to see if there are some trends. 
+## Differential Expression Analysis
+```{r}
+fit <- glmQLFit(y, design)
+fit
+```
+
+## Comparisons
+
+###Blood-Brain
+
+```{r}
+qlfBlBr <- glmQLFTest(fit, contrast=c(-1,1,0))
+
+qlfBlBr
+```
+
+###Blood-Lung
+
+```{r}
+qlfBlL <- glmQLFTest(fit, contrast=c(-1,0,1))
+
+qlfBlL
+```
+
+###Brain-Lung
+
+```{r}
+qlfBrL <- glmQLFTest(fit, contrast=c(0,-1,1))
+
+qlfBrL
+```
+
+```{r}
+head(qlfBlBr$table)
+```
+
+```{r}
+topTags(qlfBlBr, n=10,adjust.method = "BH", sort.by = "PValue")
+```
+```{r}
+topTags(qlfBlL, n=10,adjust.method = "BH", sort.by = "PValue")
+```
+```{r}
+topTags(qlfBrL, n=10,adjust.method = "BH", sort.by = "PValue")
+```
+I have log2FC:
+- depends on the contrast. 
+- negative logFC means that the first has a higher expression than the second
+
+
+TO HAVE ALL OF THE RESULTS, the entire table and save it to excel
+```{r}
+resultsBlBr <- topTags(qlfBlBr, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+write.table(resultsBlBr, "resultsBlBr.txt")
+```
+
+## Checking how many DE genes there are
+Blood vs Brain
+```{r}
+summary(decideTests(qlfBlBr, p.value=0.05, adjust.method = "BH", lfc=0))
+```
+```{r}
+summary(decideTests(qlfBlBr, p.value=0.05, adjust.method = "BH", lfc=1))
+```
+EXCEPTIONS:
+- similar tissues
+- One tissues have replicates with high variability.(Higher the variance, the more difficult it passes the test)
+in this two case I would have like hundred and not thousands like in my case
+
+Blood vs Lung
+```{r}
+BlL <- summary(decideTests(qlfBlL, p.value=0.05, adjust.method = "BH", lfc=0))
+BlL
+```
+```{r}
+summary(decideTests(qlfBlL, p.value=0.05, adjust.method = "BH", lfc=1))
+```
+Brain vs Lung
+```{r}
+summary(decideTests(qlfBrL, p.value=0.05, adjust.method = "BH", lfc=0))
+```
+
+```{r}
+summary(decideTests(qlfBlL, p.value=0.05, adjust.method = "BH", lfc=1))
+summary(decideTests(qlfBrL, p.value=0.05, adjust.method = "BH", lfc=1))
+summary(decideTests(qlfBlBr, p.value=0.05, adjust.method = "BH", lfc=1))
+
+```
+Results of the other two comparisons
+
+```{r}
+resultsBlL <- topTags(qlfBlL, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+resultsBrL <- topTags(qlfBrL, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+write.table(resultsBlL, "resultsBlL.txt")
+write.table(resultsBrL, "resultsBrL.txt")
+```
+
+NB: it is better to work on the table on excel!
+
+### 3 vs 2 comparisons CHALLENGE
+```{r}
+design3v2 <- model.matrix(~group+group, data=y$samples)
+colnames(design3v2) <- levels(y$samples$group)
+y
+```
+DO IT!!
+
+```{r}
+# 1. Define the pairwise data
+data_pairwise <- data.frame(
+  Comparison = factor(c("Blood vs Lung", "Brain vs Lung", "Blood vs Brain"), 
+                      levels = c("Blood vs Lung", "Brain vs Lung", "Blood vs Brain")),
+  Up = c(1765, 3749, 3883),
+  Down = c(-927, -3960, -3026)
+)
+
+# 2. Reshape for ggplot
+df_long <- pivot_longer(data_pairwise, cols = c(Up, Down), names_to = "Status", values_to = "Count")
+
+# 3. Create the plot
+ggplot(df_long, aes(x = Comparison, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_hline(yintercept = 0, color = "black") +
+  # Add labels on the bars for clarity
+  geom_text(aes(label = abs(Count)), vjust = ifelse(df_long$Count > 0, -0.5, 1.5), size = 3) +
+  scale_fill_manual(values = c("Up" = "salmon", "Down" = "skyblue")) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Pairwise Differential Expression",
+       subtitle = "Number of Significant DEGs",
+       x = NULL, y = "Number of Genes") +
+  theme(legend.position = "top")
+```
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# 1. Define your data
+data_pairwise <- data.frame(
+  Comparison = factor(c("Lung vs Blood", "Lung vs Brain", "Brain vs Blood"), 
+                      levels = c("Lung vs Blood", "Lung vs Brain", "Brain vs Blood")),
+  Up = c(1765, 3749, 3883),
+  Down = c(927, 3960, 3026) # Keeping as absolute values for now
+)
+
+# 2. Reshape
+df_long <- pivot_longer(data_pairwise, cols = c(Up, Down), names_to = "Status", values_to = "Count")
+
+# 3. Side-by-side bar plot
+ggplot(df_long, aes(x = Status, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  facet_wrap(~Comparison) + # This puts them side-by-side
+  scale_fill_manual(values = c("Up" = "salmon", "Down" = "skyblue")) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Pairwise comparisons",
+       x = NULL, y = "Number of Genes") +
+  theme(legend.position = "none")
+```
+
+
+## 1v2 the true challenge
+```{r}
+res1 = decideTests(qlfBlBr) # (Blood vs Brain)
+res2 = decideTests(qlfBlL) # (Blood vs Lung)
+res3 = decideTests(qlfBrL) # (Brain vs Lung)
+brain_specific <- rownames(res1)[res1[,1] == -1 & res3[,1] == 1]
+
+colnames(design)
+
+qlfBl <- glmQLFTest(fit, contrast = c(1,-0.5,-0.5))
+qlfBr <- glmQLFTest(fit, contrast = c(-0.5,1,-0.5))
+qlfL <- glmQLFTest(fit, contrast = c(-0.5,-0.5,1))
+
+
+topTags(qlfBl, n=10,adjust.method = "BH", sort.by = "PValue")
+topTags(qlfBr, n=10,adjust.method = "BH", sort.by = "PValue")
+topTags(qlfL, n=10,adjust.method = "BH", sort.by = "PValue")
+
+top100br <- topTags(qlfBr, n=100,adjust.method = "BH", sort.by = "PValue")
+top100bl <- topTags(qlfBl, n=100,adjust.method = "BH", sort.by = "PValue")
+top100l<- topTags(qlfL, n=100,adjust.method = "BH", sort.by = "PValue")
+
+cat(rownames(top100br), sep = "\n")
+cat(rownames(top100bl), sep = "\n")
+cat(rownames(top100l), sep = "\n")
+
+summary(decideTests(qlfBr, p.value=0.05, adjust.method = "BH", lfc = 1))
+summary(decideTests(qlfBl, p.value=0.05, adjust.method = "BH", lfc = 1))
+summary(decideTests(qlfL, p.value=0.05, adjust.method = "BH", lfc = 1))
+
+```
+
+```{r}
+library(edgeR)
+
+# 1. Get the top 1000 genes for each comparison (to ensure we have enough to find intersections)
+# We take 1000 to be safe, then intersect, then sort by p-value
+top_BlBr <- topTags(qlfBlBr, n = 1000)$table
+top_BlLu <- topTags(qlfBlL, n = 1000)$table
+top_BrLu <- topTags(qlfBrL, n = 1000)$table
+
+# 2. Define the intersection logic (using the row names)
+# Blood: Up in Bl vs Br (logFC > 0) AND Up in Bl vs Lu (logFC > 0)
+blood_genes <- intersect(rownames(top_BlBr[top_BlBr$logFC > 0,]), 
+                         rownames(top_BlLu[top_BlLu$logFC > 0,]))
+
+# Brain: Down in Bl vs Br (logFC < 0) AND Up in Br vs Lu (logFC > 0)
+brain_genes <- intersect(rownames(top_BlBr[top_BlBr$logFC < 0,]), 
+                         rownames(top_BrLu[top_BrLu$logFC > 0,]))
+
+# Lung: Down in Bl vs Lu (logFC < 0) AND Down in Br vs Lu (logFC < 0)
+lung_genes <- intersect(rownames(top_BlLu[top_BlLu$logFC < 0,]), 
+                        rownames(top_BrLu[top_BrLu$logFC < 0,]))
+
+# 3. Get the top 100 and sort by PValue
+# Here we take the intersection and sort them by the p-value from one of the tests
+get_top100_ordered <- function(genes, ref_table) {
+  subset_table <- ref_table[rownames(ref_table) %in% genes, ]
+  subset_table <- subset_table[order(subset_table$PValue), ]
+  return(head(rownames(subset_table), 100))
+}
+
+final_blood <- get_top100_ordered(blood_genes, top_BlBr)
+final_brain <- get_top100_ordered(brain_genes, top_BrLu)
+final_lung  <- get_top100_ordered(lung_genes, top_BlLu)
+
+# 4. Print for Enrichr
+cat("BLOOD:\n", final_blood, sep = "\n")
+cat("\nBRAIN:\n", final_brain, sep = "\n")
+cat("\nLUNG:\n", final_lung, sep = "\n")
+```
+
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Create a data frame from your summary values
+# Replace the numbers below with the ones from your screen output
+data_summary <- data.frame(
+  Comparison = c("Brain vs Others", "Blood vs Others", "Lung vs Others"),
+  Up = c(4488, 1886, 3045),
+  Down = c(-3512, -2055, -1869) # We make Down negative for the plot
+)
+
+# Reshape to long format for ggplot
+df_plot <- pivot_longer(data_summary, cols = c(Up, Down), names_to = "Status", values_to = "Count")
+
+ggplot(df_plot, aes(x = Comparison, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label=abs(Count)), vjust = ifelse(df_long$Count > 0, -0.5, 1.5), size = 3)+
+  geom_hline(yintercept = 0, color = "black") + # The central axis
+  scale_fill_manual(values = c("Up" = "salmon", "Down" = "skyblue")) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Differential Expression Summary",
+       x = NULL, y = "Number of Genes") +
+  theme(legend.position = "top")
+```
+
+
+## Check if DEG are DE in entire dataset
+I first convert into TPM
+
+
+```{r}
+library(recount)
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_blood)$TPM <- recount::getTPM(rse_blood)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "CEACAM6")
+which(rowData(rse_brain)$gene_name == "INA")
+which(rowData(rse_brain)$gene_name == "CTSE")
+which(rowData(rse_blood)$gene_name == "ACTA1")
+
+plotCounts(y, gene = 10396, intgroup = "group", 
+           main = "ACTA1 Expression Check")
+```
+
+```{r}
+boxplot(assays(rse_brain)$TPM[10396,],assays(rse_blood)$TPM[10396,], assays(rse_lung)$TPM[10396,], outline=F , names=c("Brain","Blood","Lung"), col=c("forestgreen", "firebrick", "navyblue"), ylab="TPM", main="Transcript level of ACTA1")
+```
+
+
+### CEACAM6 expression
+```{r}
+boxplot(assays(rse_brain)$TPM[28521,],assays(rse_blood)$TPM[28521,], assays(rse_lung)$TPM[28521,], outline=F , names=c("Brain","Blood","Lung"), colors(my_colors))
+```
+```{r}
+wilcox.test(assays(rse_brain)$TPM[6157,], assays(rse_blood)$TPM[6157,])
+wilcox.test(assays(rse_brain)$TPM[6157,], assays(rse_lung)$TPM[6157,])
+```
+# CTSE Expression 9972
+```{r}
+boxplot(assays(rse_brain)$TPM[9972,],assays(rse_blood)$TPM[9972,], assays(rse_lung)$TPM[9972,], outline=F , names=c("Brain","Blood","Lung"), col=c("forestgreen", "firebrick", "navyblue"), ylab="TPM", main="Transcript level of CTSE")
+```
+
+
+### INA expression
+```{r}
+boxplot(assays(rse_brain)$TPM[12239,],assays(rse_blood)$TPM[12239,], assays(rse_lung)$TPM[12239,], outline=F , names=c("Brain","Blood","Lung"))
+```
+I can also test statistically! pls change the row number.
+In enrichment analysis it's important to understand how and why some genes are overexpressed
+```{r}
+wilcox.test(assays(rse_brain)$TPM[12239,], assays(rse_blood)$TPM[12239,])
+wilcox.test(assays(rse_brain)$TPM[12239,], assays(rse_lung)$TPM[12239,])
+wilcox.test(assays(rse_blood)$TPM[12239,], assays(rse_lung)$TPM[12239,])
+```
+
+```{r}
+28521
+
+wilcox.test(assays(rse_lung)$TPM[9972,], assays(rse_blood)$TPM[9972,])
+wilcox.test(assays(rse_lung)$TPM[9972,], assays(rse_brain)$TPM[9972,])
+```
+
+
+CHOOSE ONLY ONE GENE and look at it's expression and understand why a gene is expressed exclusively in a tissue
